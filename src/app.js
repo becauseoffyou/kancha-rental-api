@@ -52,7 +52,7 @@ app.get("/api/test-db", async (req, res) => {
     }
 });
 
-const PORT = process.env.PORT || 5000;
+const PORT = process.env.PORT || 9090;
 
 app.listen(PORT, () => {
     console.log(`KANCHA API running on port ${PORT}`);
