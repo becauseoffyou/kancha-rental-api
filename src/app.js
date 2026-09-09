@@ -8,16 +8,24 @@ const bookingRoutes =
     require("./routes/booking.routes");
 const paymentRoutes =
     require("./routes/payment.routes");
+const authRoutes =
+    require("./routes/auth.routes");
+
 const app = express();
 
 app.use(cors());
 app.use(express.json());
+app.use(
+    "/api/auth",
+    authRoutes
+);
 app.use("/api/equipment", equipmentRoutes);
 app.use("/api/booking", bookingRoutes);
 app.use(
     "/api/payments",
     paymentRoutes
 );
+
 app.use(
     "/uploads",
     express.static(
