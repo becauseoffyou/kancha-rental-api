@@ -9,6 +9,8 @@ const router = express.Router();
 const JWT_SECRET =
     process.env.JWT_SECRET || "kancha-dev-secret";
 
+const authMiddleware =
+    require("../middleware/auth.middleware");
 // ==============================
 // REGISTER
 // ==============================
@@ -253,4 +255,57 @@ router.post("/login", async (req, res) => {
     }
 });
 
+router.get(
+    "/me",
+    authMiddleware,
+    async (req, res) => {
+        try {
+            const result =
+                await pool.query(
+                    `
+                    SELECT
+                        id,
+                        name,
+                        email,
+                        phone,
+                        auth_provider,
+                        email_verified,
+                        verification_status,
+                        created_at,
+                        updated_at
+                    FROM users
+                    WHERE id = $1
+                    LIMIT 1
+                    `,
+                    [req.user.userId]
+                );
+
+            if (result.rows.length === 0) {
+                return res.status(404).json({
+                    success: false,
+                    message:
+                        "User tidak ditemukan",
+                });
+            }
+
+            return res.json({
+                success: true,
+                data: {
+                    user: result.rows[0],
+                },
+            });
+        } catch (error) {
+            console.error(
+                "Get me error:",
+                error
+            );
+
+            return res.status(500).json({
+                success: false,
+                message:
+                    "Gagal mengambil data user",
+            });
+        }
+    }
+);
 module.exports = router;
