@@ -11,6 +11,8 @@ const paymentRoutes =
 const authRoutes =
     require("./routes/auth.routes");
 
+const verificationRoutes =
+    require("./routes/verification.routes");
 const app = express();
 
 app.use(cors());
@@ -25,7 +27,10 @@ app.use(
     "/api/payments",
     paymentRoutes
 );
-
+app.use(
+    "/api/verification",
+    verificationRoutes
+);
 app.use(
     "/uploads",
     express.static(
