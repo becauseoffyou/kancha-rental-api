@@ -292,4 +292,305 @@ router.post(
     }
 );
 
+// ==============================
+// GET MY VERIFICATION
+// ==============================
+router.get(
+    "/me",
+    authMiddleware,
+    async (req, res) => {
+        try {
+            const result =
+                await pool.query(
+                    `
+                    SELECT
+                        id,
+                        user_id,
+                        nik,
+                        full_name,
+                        ktp_image_url,
+                        selfie_image_url,
+                        verification_status,
+                        rejection_reason,
+                        submitted_at,
+                        verified_at
+                    FROM user_verifications
+                    WHERE user_id = $1
+                    LIMIT 1
+                    `,
+                    [req.user.userId]
+                );
+
+            if (result.rows.length === 0) {
+                return res.json({
+                    success: true,
+                    data: {
+                        verification: null,
+                    },
+                });
+            }
+
+            return res.json({
+                success: true,
+                data: {
+                    verification:
+                        result.rows[0],
+                },
+            });
+        } catch (error) {
+            console.error(
+                "Get verification error:",
+                error
+            );
+
+            return res.status(500).json({
+                success: false,
+                message:
+                    "Gagal mengambil status verifikasi",
+            });
+        }
+    }
+);
+// ==============================
+// ADMIN - LIST PENDING
+// ==============================
+router.get(
+    "/admin/pending",
+    async (req, res) => {
+        try {
+            const result =
+                await pool.query(
+                    `
+                    SELECT
+                        uv.id,
+                        uv.user_id,
+                        uv.nik,
+                        uv.full_name,
+                        uv.ktp_image_url,
+                        uv.selfie_image_url,
+                        uv.verification_status,
+                        uv.rejection_reason,
+                        uv.submitted_at,
+                        uv.verified_at,
+
+                        u.name AS user_name,
+                        u.email,
+                        u.phone
+
+                    FROM user_verifications uv
+
+                    JOIN users u
+                        ON u.id = uv.user_id
+
+                    WHERE uv.verification_status = 'PENDING'
+
+                    ORDER BY uv.submitted_at ASC
+                    `
+                );
+
+            return res.json({
+                success: true,
+                data: result.rows,
+            });
+        } catch (error) {
+            console.error(
+                "Get pending verification error:",
+                error
+            );
+
+            return res.status(500).json({
+                success: false,
+                message:
+                    "Gagal mengambil verifikasi pending",
+            });
+        }
+    }
+);
+
+// ==============================
+// ADMIN - APPROVE
+// ==============================
+router.patch(
+    "/admin/:userId/approve",
+    async (req, res) => {
+        const client =
+            await pool.connect();
+
+        try {
+            const { userId } =
+                req.params;
+
+            await client.query("BEGIN");
+
+            const verificationResult =
+                await client.query(
+                    `
+                    UPDATE user_verifications
+                    SET
+                        verification_status = 'VERIFIED',
+                        rejection_reason = NULL,
+                        verified_at = NOW()
+                    WHERE user_id = $1
+                    RETURNING *
+                    `,
+                    [userId]
+                );
+
+            if (
+                verificationResult.rows.length === 0
+            ) {
+                await client.query(
+                    "ROLLBACK"
+                );
+
+                return res.status(404).json({
+                    success: false,
+                    message:
+                        "Data verifikasi tidak ditemukan",
+                });
+            }
+
+            await client.query(
+                `
+                UPDATE users
+                SET
+                    verification_status = 'VERIFIED',
+                    updated_at = NOW()
+                WHERE id = $1
+                `,
+                [userId]
+            );
+
+            await client.query("COMMIT");
+
+            return res.json({
+                success: true,
+                message:
+                    "Verifikasi user disetujui",
+                data: {
+                    verification:
+                        verificationResult.rows[0],
+                },
+            });
+        } catch (error) {
+            await client.query(
+                "ROLLBACK"
+            );
+
+            console.error(
+                "Approve verification error:",
+                error
+            );
+
+            return res.status(500).json({
+                success: false,
+                message:
+                    "Gagal menyetujui verifikasi",
+            });
+        } finally {
+            client.release();
+        }
+    }
+);
+
+// ==============================
+// ADMIN - REJECT
+// ==============================
+router.patch(
+    "/admin/:userId/reject",
+    async (req, res) => {
+        const client =
+            await pool.connect();
+
+        try {
+            const { userId } =
+                req.params;
+
+            const { reason } =
+                req.body;
+
+            if (!reason?.trim()) {
+                return res.status(400).json({
+                    success: false,
+                    message:
+                        "Alasan penolakan wajib diisi",
+                });
+            }
+
+            await client.query("BEGIN");
+
+            const verificationResult =
+                await client.query(
+                    `
+                    UPDATE user_verifications
+                    SET
+                        verification_status = 'REJECTED',
+                        rejection_reason = $1,
+                        verified_at = NULL
+                    WHERE user_id = $2
+                    RETURNING *
+                    `,
+                    [
+                        reason.trim(),
+                        userId,
+                    ]
+                );
+
+            if (
+                verificationResult.rows.length === 0
+            ) {
+                await client.query(
+                    "ROLLBACK"
+                );
+
+                return res.status(404).json({
+                    success: false,
+                    message:
+                        "Data verifikasi tidak ditemukan",
+                });
+            }
+
+            await client.query(
+                `
+                UPDATE users
+                SET
+                    verification_status = 'REJECTED',
+                    updated_at = NOW()
+                WHERE id = $1
+                `,
+                [userId]
+            );
+
+            await client.query("COMMIT");
+
+            return res.json({
+                success: true,
+                message:
+                    "Verifikasi user ditolak",
+                data: {
+                    verification:
+                        verificationResult.rows[0],
+                },
+            });
+        } catch (error) {
+            await client.query(
+                "ROLLBACK"
+            );
+
+            console.error(
+                "Reject verification error:",
+                error
+            );
+
+            return res.status(500).json({
+                success: false,
+                message:
+                    "Gagal menolak verifikasi",
+            });
+        } finally {
+            client.release();
+        }
+    }
+);
+
 module.exports = router;
