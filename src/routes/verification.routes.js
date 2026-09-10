@@ -375,7 +375,8 @@ router.get(
 
                         u.name AS user_name,
                         u.email,
-                        u.phone
+                        u.phone,
+ u.created_at AS registered_at
 
                     FROM user_verifications uv
 
