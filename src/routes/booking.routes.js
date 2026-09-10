@@ -1314,24 +1314,27 @@ router.get("/:orderNumber", async (req, res) => {
         const paymentResult =
             await pool.query(
                 `
-                SELECT
-                    id,
-                    payment_reference,
-                    payment_type,
-                    payment_method,
-                    bank_code,
-                    amount,
-                    payment_status,
-                    proof_url,
-                    paid_at,
-                    created_at
+        SELECT
+            id,
+            payment_reference,
+            payment_type,
+            payment_method,
+            bank_code,
+            payment_channel,
+            amount,
+            payment_status,
+            proof_url,
+            paid_at,
+            created_at,
+            updated_at,
+            rejection_reason
 
-                FROM payments
+        FROM payments
 
-                WHERE booking_id = $1
+        WHERE booking_id = $1
 
-                ORDER BY created_at DESC
-                `,
+        ORDER BY created_at ASC
+        `,
                 [booking.id]
             );
 
