@@ -14,8 +14,7 @@ router.post(
         const client = await pool.connect();
 
         try {
-            const user_id = req.user.id;
-
+            const user_id = req.user.userId;
             const {
                 equipment_id,
                 start_date,
