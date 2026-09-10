@@ -476,7 +476,154 @@ router.post(
             client.release();
         }
     });
+// ========================================
+// CUSTOMER - GET MY BOOKINGS
+// ========================================
+router.get(
+    "/me",
+    authMiddleware,
+    async (req, res) => {
+        try {
+            const userId = req.user.userId;
 
+            const result = await pool.query(
+                `
+                SELECT
+                    b.id,
+                    b.order_number,
+
+                    TO_CHAR(
+                        b.start_date,
+                        'YYYY-MM-DD'
+                    ) AS start_date,
+
+                    TO_CHAR(
+                        b.end_date,
+                        'YYYY-MM-DD'
+                    ) AS end_date,
+
+                    b.pickup_method,
+                    b.grand_total,
+                    b.payment_type,
+                    b.rental_status,
+                    b.created_at,
+
+                    CASE
+                        WHEN COALESCE(
+                            (
+                                SELECT SUM(p.amount)
+                                FROM payments p
+                                WHERE p.booking_id = b.id
+                                  AND p.payment_status = 'PAID'
+                            ),
+                            0
+                        ) >= b.grand_total
+                        THEN 'PAID'
+
+                        WHEN EXISTS (
+                            SELECT 1
+                            FROM payments p
+                            WHERE p.booking_id = b.id
+                              AND p.payment_status = 'PAID'
+                        )
+                        THEN 'DP_PAID'
+
+                        WHEN EXISTS (
+                            SELECT 1
+                            FROM payments p
+                            WHERE p.booking_id = b.id
+                              AND p.payment_status = 'WAITING_VERIFICATION'
+                        )
+                        THEN 'WAITING_VERIFICATION'
+
+                        ELSE 'UNPAID'
+                    END AS payment_status,
+
+                    COALESCE(
+                        json_agg(
+                            json_build_object(
+                                'id', bi.id,
+                                'equipment_id', bi.equipment_id,
+                                'equipment_name', bi.equipment_name,
+                                'price_per_day', bi.price_per_day,
+                                'quantity', bi.quantity,
+                                'duration', bi.duration,
+                                'subtotal', bi.subtotal
+                            )
+                            ORDER BY bi.id
+                        ) FILTER (
+                            WHERE bi.id IS NOT NULL
+                        ),
+                        '[]'::json
+                    ) AS items
+
+                FROM bookings b
+
+                LEFT JOIN booking_items bi
+                    ON bi.booking_id = b.id
+
+                WHERE b.user_id = $1
+
+                GROUP BY b.id
+
+                ORDER BY b.created_at DESC
+                `,
+                [userId]
+            );
+
+            res.json({
+                success: true,
+                data: result.rows.map(
+                    (booking) => ({
+                        ...booking,
+                        grand_total: Number(
+                            booking.grand_total
+                        ),
+
+                        items:
+                            booking.items?.map(
+                                (item) => ({
+                                    ...item,
+
+                                    price_per_day:
+                                        Number(
+                                            item.price_per_day
+                                        ),
+
+                                    quantity:
+                                        Number(
+                                            item.quantity
+                                        ),
+
+                                    duration:
+                                        Number(
+                                            item.duration
+                                        ),
+
+                                    subtotal:
+                                        Number(
+                                            item.subtotal
+                                        ),
+                                })
+                            ) || [],
+                    })
+                ),
+            });
+
+        } catch (error) {
+            console.error(
+                "Get my bookings error:",
+                error
+            );
+
+            res.status(500).json({
+                success: false,
+                message:
+                    "Gagal mengambil booking",
+            });
+        }
+    }
+);
 // ========================================
 // ADMIN - GET ALL BOOKINGS
 // ========================================
