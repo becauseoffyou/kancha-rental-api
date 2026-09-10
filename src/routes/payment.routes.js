@@ -4,7 +4,7 @@ const path = require("path");
 const fs = require("fs");
 
 const pool = require("../config/database");
-
+const authMiddleware = require("../middleware/auth.middleware");
 const router = express.Router();
 
 const uploadDir = path.join(
@@ -573,7 +573,354 @@ router.patch(
         }
     }
 );
+// ========================================
+// CUSTOMER - CREATE REMAINING PAYMENT
+// ========================================
+router.post(
+    "/:orderNumber/remaining",
+    authMiddleware,
+    async (req, res) => {
+        const client =
+            await pool.connect();
 
+        try {
+            await client.query(
+                "BEGIN"
+            );
+
+            const {
+                orderNumber,
+            } = req.params;
+
+            const userId =
+                req.user.userId;
+
+            // ==============================
+            // GET BOOKING MILIK CUSTOMER
+            // ==============================
+            const bookingResult =
+                await client.query(
+                    `
+                    SELECT
+                        id,
+                        order_number,
+                        user_id,
+                        grand_total,
+                        payment_type,
+                        rental_status
+                    FROM bookings
+                    WHERE order_number = $1
+                    FOR UPDATE
+                    `,
+                    [
+                        orderNumber,
+                    ]
+                );
+
+            if (
+                bookingResult.rows
+                    .length === 0
+            ) {
+                await client.query(
+                    "ROLLBACK"
+                );
+
+                return res
+                    .status(404)
+                    .json({
+                        success:
+                            false,
+
+                        message:
+                            "Booking tidak ditemukan",
+                    });
+            }
+
+            const booking =
+                bookingResult
+                    .rows[0];
+
+            // ==============================
+            // PASTIKAN BOOKING MILIK USER
+            // ==============================
+            if (
+                Number(
+                    booking.user_id
+                ) !==
+                Number(userId)
+            ) {
+                await client.query(
+                    "ROLLBACK"
+                );
+
+                return res
+                    .status(403)
+                    .json({
+                        success:
+                            false,
+
+                        message:
+                            "Anda tidak memiliki akses ke booking ini",
+                    });
+            }
+
+            // ==============================
+            // BOOKING HARUS TIPE DP
+            // ==============================
+            if (
+                booking.payment_type !==
+                "DP"
+            ) {
+                await client.query(
+                    "ROLLBACK"
+                );
+
+                return res
+                    .status(400)
+                    .json({
+                        success:
+                            false,
+
+                        message:
+                            "Booking ini bukan pembayaran DP",
+                    });
+            }
+
+            // ==============================
+            // CEK DP SUDAH PAID
+            // ==============================
+            const dpResult =
+                await client.query(
+                    `
+                    SELECT id
+                    FROM payments
+                    WHERE booking_id = $1
+                      AND payment_type = 'DP'
+                      AND payment_status = 'PAID'
+                    LIMIT 1
+                    `,
+                    [
+                        booking.id,
+                    ]
+                );
+
+            if (
+                dpResult.rows
+                    .length === 0
+            ) {
+                await client.query(
+                    "ROLLBACK"
+                );
+
+                return res
+                    .status(400)
+                    .json({
+                        success:
+                            false,
+
+                        message:
+                            "DP belum terverifikasi",
+                    });
+            }
+
+            // ==============================
+            // HITUNG TOTAL SUDAH PAID
+            // ==============================
+            const paidResult =
+                await client.query(
+                    `
+                    SELECT
+                        COALESCE(
+                            SUM(amount),
+                            0
+                        ) AS total_paid
+                    FROM payments
+                    WHERE booking_id = $1
+                      AND payment_status = 'PAID'
+                    `,
+                    [
+                        booking.id,
+                    ]
+                );
+
+            const totalPaid =
+                Number(
+                    paidResult
+                        .rows[0]
+                        .total_paid
+                );
+
+            const grandTotal =
+                Number(
+                    booking
+                        .grand_total
+                );
+
+            const remaining =
+                grandTotal -
+                totalPaid;
+
+            // ==============================
+            // SUDAH LUNAS
+            // ==============================
+            if (
+                remaining <= 0
+            ) {
+                await client.query(
+                    "ROLLBACK"
+                );
+
+                return res
+                    .status(400)
+                    .json({
+                        success:
+                            false,
+
+                        message:
+                            "Booking sudah lunas",
+                    });
+            }
+
+            // ==============================
+            // CEK TRANSAKSI REMAINING AKTIF
+            // ==============================
+            const existingResult =
+                await client.query(
+                    `
+                    SELECT *
+                    FROM payments
+                    WHERE booking_id = $1
+                      AND payment_type = 'REMAINING'
+                      AND payment_status IN (
+                          'PENDING',
+                          'WAITING_VERIFICATION',
+                          'PAID'
+                      )
+                    ORDER BY created_at DESC
+                    LIMIT 1
+                    `,
+                    [
+                        booking.id,
+                    ]
+                );
+
+            // Kalau sudah pernah dibuat,
+            // jangan buat payment dobel
+            if (
+                existingResult.rows
+                    .length > 0
+            ) {
+                await client.query(
+                    "COMMIT"
+                );
+
+                const existing =
+                    existingResult
+                        .rows[0];
+
+                return res.json({
+                    success: true,
+
+                    message:
+                        "Pembayaran pelunasan sudah tersedia",
+
+                    data: {
+                        ...existing,
+
+                        amount:
+                            Number(
+                                existing
+                                    .amount
+                            ),
+                    },
+                });
+            }
+
+            // ==============================
+            // CREATE REFERENCE
+            // ==============================
+            const paymentReference =
+                `PAY-REM-${Date.now()}`;
+
+            // ==============================
+            // CREATE REMAINING PAYMENT
+            // ==============================
+            const paymentResult =
+                await client.query(
+                    `
+                    INSERT INTO payments (
+                        booking_id,
+                        payment_reference,
+                        payment_type,
+                        amount,
+                        payment_status
+                    )
+                    VALUES (
+                        $1,
+                        $2,
+                        'REMAINING',
+                        $3,
+                        'PENDING'
+                    )
+                    RETURNING *
+                    `,
+                    [
+                        booking.id,
+                        paymentReference,
+                        remaining,
+                    ]
+                );
+
+            await client.query(
+                "COMMIT"
+            );
+
+            const payment =
+                paymentResult
+                    .rows[0];
+
+            return res
+                .status(201)
+                .json({
+                    success: true,
+
+                    message:
+                        "Pembayaran pelunasan berhasil dibuat",
+
+                    data: {
+                        ...payment,
+
+                        amount:
+                            Number(
+                                payment
+                                    .amount
+                            ),
+                    },
+                });
+        } catch (error) {
+            await client.query(
+                "ROLLBACK"
+            );
+
+            console.error(
+                "Create customer remaining payment error:",
+                error
+            );
+
+            return res
+                .status(500)
+                .json({
+                    success:
+                        false,
+
+                    message:
+                        "Gagal membuat pembayaran pelunasan",
+                });
+        } finally {
+            client.release();
+        }
+    }
+);
 router.post("/admin/:orderNumber/remaining", async (req, res) => {
     const client = await pool.connect();
 
