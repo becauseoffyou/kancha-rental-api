@@ -1,113 +1,132 @@
 const express = require("express");
 const pool = require("../config/database");
-
+const authMiddleware = require("../middleware/auth.middleware");
 const router = express.Router();
 
 
 // =========================================
 // POST CREATE BOOKING
 // =========================================
-router.post("/", async (req, res) => {
-    const client = await pool.connect();
+router.post(
+    "/",
+    authMiddleware,
+    async (req, res) => {
+        const client = await pool.connect();
 
-    try {
-        const {
-            user_id,
-            equipment_id,
-            start_date,
-            end_date,
-            pickup_method,
-            delivery_address,
-            notes,
-            payment_type,
-        } = req.body;
+        try {
+            const user_id = req.user.id;
 
-        if (
-            !user_id ||
-            !equipment_id ||
-            !start_date ||
-            !end_date ||
-            !pickup_method ||
-            !payment_type
-        ) {
-            return res.status(400).json({
-                success: false,
-                message: "Data booking belum lengkap",
-            });
-        }
+            const {
+                equipment_id,
+                start_date,
+                end_date,
+                pickup_method,
+                delivery_address,
+                notes,
+                payment_type,
+            } = req.body;
 
-        if (start_date > end_date) {
-            return res.status(400).json({
-                success: false,
-                message:
-                    "Tanggal selesai tidak boleh sebelum tanggal mulai",
-            });
-        }
+            if (
+                !equipment_id ||
+                !start_date ||
+                !end_date ||
+                !pickup_method ||
+                !payment_type
+            ) {
+                return res.status(400).json({
+                    success: false,
+                    message: "Data booking belum lengkap",
+                });
+            }
 
-        if (
-            !["PICKUP", "DELIVERY"].includes(
-                pickup_method
-            )
-        ) {
-            return res.status(400).json({
-                success: false,
-                message:
-                    "Metode pengambilan tidak valid",
-            });
-        }
+            if (start_date > end_date) {
+                return res.status(400).json({
+                    success: false,
+                    message:
+                        "Tanggal selesai tidak boleh sebelum tanggal mulai",
+                });
+            }
 
-        if (
-            !["DP", "FULL"].includes(
-                payment_type
-            )
-        ) {
-            return res.status(400).json({
-                success: false,
-                message:
-                    "Tipe pembayaran tidak valid",
-            });
-        }
+            if (
+                !["PICKUP", "DELIVERY"].includes(
+                    pickup_method
+                )
+            ) {
+                return res.status(400).json({
+                    success: false,
+                    message:
+                        "Metode pengambilan tidak valid",
+                });
+            }
 
-        if (
-            pickup_method === "DELIVERY" &&
-            !delivery_address
-        ) {
-            return res.status(400).json({
-                success: false,
-                message:
-                    "Alamat delivery wajib diisi",
-            });
-        }
+            if (
+                !["DP", "FULL"].includes(
+                    payment_type
+                )
+            ) {
+                return res.status(400).json({
+                    success: false,
+                    message:
+                        "Tipe pembayaran tidak valid",
+                });
+            }
 
-        await client.query("BEGIN");
+            if (
+                pickup_method === "DELIVERY" &&
+                !delivery_address
+            ) {
+                return res.status(400).json({
+                    success: false,
+                    message:
+                        "Alamat delivery wajib diisi",
+                });
+            }
 
-        // ==============================
-        // CEK USER
-        // ==============================
-        const userResult = await client.query(
-            `
-            SELECT id
-            FROM users
-            WHERE id = $1
-            `,
-            [user_id]
-        );
+            await client.query("BEGIN");
 
-        if (userResult.rows.length === 0) {
-            await client.query("ROLLBACK");
-
-            return res.status(404).json({
-                success: false,
-                message: "User tidak ditemukan",
-            });
-        }
-
-        // ==============================
-        // CEK EQUIPMENT
-        // ==============================
-        const equipmentResult =
-            await client.query(
+            // ==============================
+            // CEK USER
+            // ==============================
+            const userResult = await client.query(
                 `
+    SELECT
+        id,
+        name,
+        email,
+        verification_status
+    FROM users
+    WHERE id = $1
+    `,
+                [user_id]
+            );
+
+            if (userResult.rows.length === 0) {
+                await client.query("ROLLBACK");
+
+                return res.status(404).json({
+                    success: false,
+                    message: "User tidak ditemukan",
+                });
+            }
+
+            const currentUser = userResult.rows[0];
+
+            if (currentUser.verification_status !== "VERIFIED") {
+                await client.query("ROLLBACK");
+
+                return res.status(403).json({
+                    success: false,
+                    message:
+                        "Akun harus terverifikasi sebelum melakukan booking",
+                });
+            }
+
+            // ==============================
+            // CEK EQUIPMENT
+            // ==============================
+            const equipmentResult =
+                await client.query(
+                    `
                 SELECT
                     id,
                     name,
@@ -117,47 +136,47 @@ router.post("/", async (req, res) => {
                 WHERE id = $1
                   AND is_active = TRUE
                 `,
-                [equipment_id]
-            );
+                    [equipment_id]
+                );
 
-        if (
-            equipmentResult.rows.length === 0
-        ) {
-            await client.query("ROLLBACK");
+            if (
+                equipmentResult.rows.length === 0
+            ) {
+                await client.query("ROLLBACK");
 
-            return res.status(404).json({
-                success: false,
-                message:
-                    "Equipment tidak ditemukan",
-            });
-        }
+                return res.status(404).json({
+                    success: false,
+                    message:
+                        "Equipment tidak ditemukan",
+                });
+            }
 
-        const equipment =
-            equipmentResult.rows[0];
+            const equipment =
+                equipmentResult.rows[0];
 
-        // ==============================
-        // HITUNG TOTAL UNIT
-        // ==============================
-        const unitResult =
-            await client.query(
-                `
+            // ==============================
+            // HITUNG TOTAL UNIT
+            // ==============================
+            const unitResult =
+                await client.query(
+                    `
                 SELECT COUNT(*)::int AS total_units
                 FROM equipment_units
                 WHERE equipment_id = $1
                   AND status != 'MAINTENANCE'
                 `,
-                [equipment_id]
-            );
+                    [equipment_id]
+                );
 
-        const totalUnits =
-            unitResult.rows[0]?.total_units || 0;
+            const totalUnits =
+                unitResult.rows[0]?.total_units || 0;
 
-        // ==============================
-        // HITUNG UNIT YANG SUDAH BOOKING
-        // ==============================
-        const bookedResult =
-            await client.query(
-                `
+            // ==============================
+            // HITUNG UNIT YANG SUDAH BOOKING
+            // ==============================
+            const bookedResult =
+                await client.query(
+                    `
                 SELECT
                     COALESCE(
                         SUM(bi.quantity),
@@ -180,85 +199,85 @@ router.post("/", async (req, res) => {
                       'COMPLETED'
                   )
                 `,
-                [
-                    equipment_id,
-                    start_date,
-                    end_date,
-                ]
+                    [
+                        equipment_id,
+                        start_date,
+                        end_date,
+                    ]
+                );
+
+            const bookedUnits =
+                bookedResult.rows[0]
+                    ?.booked_units || 0;
+
+            const availableUnits =
+                totalUnits - bookedUnits;
+
+            if (availableUnits <= 0) {
+                await client.query("ROLLBACK");
+
+                return res.status(409).json({
+                    success: false,
+                    message:
+                        "Equipment sudah tidak tersedia pada periode tersebut",
+                });
+            }
+
+            // ==============================
+            // HITUNG DURASI
+            // ==============================
+            const start = new Date(
+                `${start_date}T00:00:00`
             );
 
-        const bookedUnits =
-            bookedResult.rows[0]
-                ?.booked_units || 0;
-
-        const availableUnits =
-            totalUnits - bookedUnits;
-
-        if (availableUnits <= 0) {
-            await client.query("ROLLBACK");
-
-            return res.status(409).json({
-                success: false,
-                message:
-                    "Equipment sudah tidak tersedia pada periode tersebut",
-            });
-        }
-
-        // ==============================
-        // HITUNG DURASI
-        // ==============================
-        const start = new Date(
-            `${start_date}T00:00:00`
-        );
-
-        const end = new Date(
-            `${end_date}T00:00:00`
-        );
-
-        const duration =
-            Math.floor(
-                (end - start) /
-                (1000 * 60 * 60 * 24)
-            ) + 1;
-
-        const pricePerDay =
-            Number(
-                equipment.price_per_day
+            const end = new Date(
+                `${end_date}T00:00:00`
             );
 
-        const subtotal =
-            pricePerDay * duration;
+            const duration =
+                Math.floor(
+                    (end - start) /
+                    (1000 * 60 * 60 * 24)
+                ) + 1;
 
-        const deliveryFee =
-            pickup_method === "DELIVERY"
-                ? 50000
-                : 0;
+            const pricePerDay =
+                Number(
+                    equipment.price_per_day
+                );
 
-        const grandTotal =
-            subtotal + deliveryFee;
+            const subtotal =
+                pricePerDay * duration;
 
-        const paymentAmount =
-            payment_type === "DP"
-                ? Math.ceil(
-                    grandTotal * 0.5
-                )
-                : grandTotal;
+            const deliveryFee =
+                pickup_method === "DELIVERY"
+                    ? 50000
+                    : 0;
 
-        const remainingAmount =
-            grandTotal - paymentAmount;
+            const grandTotal =
+                subtotal + deliveryFee;
 
-        // ==============================
-        // GENERATE ORDER NUMBER
-        // ==============================
-        const orderNumber =
-            `KNC-${Date.now()}`;
+            const paymentAmount =
+                payment_type === "DP"
+                    ? Math.ceil(
+                        grandTotal * 0.5
+                    )
+                    : grandTotal;
 
-        // ==============================
-        // INSERT BOOKING
-        // ==============================
-        const bookingResult =
-            await client.query(
-                `
+            const remainingAmount =
+                grandTotal - paymentAmount;
+
+            // ==============================
+            // GENERATE ORDER NUMBER
+            // ==============================
+            const orderNumber =
+                `KNC-${Date.now()}`;
+
+            // ==============================
+            // INSERT BOOKING
+            // ==============================
+            const bookingResult =
+                await client.query(
+                    `
                 INSERT INTO bookings (
                     order_number,
                     user_id,
@@ -289,32 +308,32 @@ router.post("/", async (req, res) => {
                 )
                 RETURNING *
                 `,
-                [
-                    orderNumber,
-                    user_id,
-                    start_date,
-                    end_date,
-                    pickup_method,
-                    pickup_method ===
-                        "DELIVERY"
-                        ? delivery_address
-                        : null,
-                    notes || null,
-                    subtotal,
-                    deliveryFee,
-                    grandTotal,
-                    payment_type,
-                ]
-            );
+                    [
+                        orderNumber,
+                        user_id,
+                        start_date,
+                        end_date,
+                        pickup_method,
+                        pickup_method ===
+                            "DELIVERY"
+                            ? delivery_address
+                            : null,
+                        notes || null,
+                        subtotal,
+                        deliveryFee,
+                        grandTotal,
+                        payment_type,
+                    ]
+                );
 
-        const booking =
-            bookingResult.rows[0];
+            const booking =
+                bookingResult.rows[0];
 
-        // ==============================
-        // INSERT BOOKING ITEM
-        // ==============================
-        await client.query(
-            `
+            // ==============================
+            // INSERT BOOKING ITEM
+            // ==============================
+            await client.query(
+                `
             INSERT INTO booking_items (
                 booking_id,
                 equipment_id,
@@ -334,25 +353,25 @@ router.post("/", async (req, res) => {
                 $6
             )
             `,
-            [
-                booking.id,
-                equipment.id,
-                equipment.name,
-                pricePerDay,
-                duration,
-                subtotal,
-            ]
-        );
+                [
+                    booking.id,
+                    equipment.id,
+                    equipment.name,
+                    pricePerDay,
+                    duration,
+                    subtotal,
+                ]
+            );
 
-        // ==============================
-        // INSERT PAYMENT
-        // ==============================
-        const paymentReference =
-            `PAY-${Date.now()}`;
+            // ==============================
+            // INSERT PAYMENT
+            // ==============================
+            const paymentReference =
+                `PAY-${Date.now()}`;
 
-        const paymentResult =
-            await client.query(
-                `
+            const paymentResult =
+                await client.query(
+                    `
                 INSERT INTO payments (
                     booking_id,
                     payment_reference,
@@ -369,95 +388,95 @@ router.post("/", async (req, res) => {
                 )
                 RETURNING *
                 `,
-                [
-                    booking.id,
-                    paymentReference,
-                    payment_type,
-                    paymentAmount,
-                ]
+                    [
+                        booking.id,
+                        paymentReference,
+                        payment_type,
+                        paymentAmount,
+                    ]
+                );
+
+            await client.query("COMMIT");
+
+            res.status(201).json({
+                success: true,
+                message:
+                    "Booking berhasil dibuat",
+
+                data: {
+                    booking: {
+                        id: booking.id,
+
+                        order_number:
+                            booking.order_number,
+
+                        start_date,
+                        end_date,
+
+                        subtotal,
+                        delivery_fee:
+                            deliveryFee,
+
+                        grand_total:
+                            grandTotal,
+
+                        payment_type,
+
+                        rental_status:
+                            booking.rental_status,
+                    },
+
+                    equipment: {
+                        id: equipment.id,
+                        name: equipment.name,
+
+                        price_per_day:
+                            pricePerDay,
+
+                        duration,
+                        quantity: 1,
+                    },
+
+                    payment: {
+                        id:
+                            paymentResult.rows[0]
+                                .id,
+
+                        payment_reference:
+                            paymentResult.rows[0]
+                                .payment_reference,
+
+                        payment_type,
+
+                        amount:
+                            paymentAmount,
+
+                        remaining_amount:
+                            remainingAmount,
+
+                        payment_status:
+                            paymentResult.rows[0]
+                                .payment_status,
+                    },
+                },
+            });
+        } catch (error) {
+            await client.query("ROLLBACK");
+
+            console.error(
+                "Create booking error:",
+                error
             );
 
-        await client.query("COMMIT");
-
-        res.status(201).json({
-            success: true,
-            message:
-                "Booking berhasil dibuat",
-
-            data: {
-                booking: {
-                    id: booking.id,
-
-                    order_number:
-                        booking.order_number,
-
-                    start_date,
-                    end_date,
-
-                    subtotal,
-                    delivery_fee:
-                        deliveryFee,
-
-                    grand_total:
-                        grandTotal,
-
-                    payment_type,
-
-                    rental_status:
-                        booking.rental_status,
-                },
-
-                equipment: {
-                    id: equipment.id,
-                    name: equipment.name,
-
-                    price_per_day:
-                        pricePerDay,
-
-                    duration,
-                    quantity: 1,
-                },
-
-                payment: {
-                    id:
-                        paymentResult.rows[0]
-                            .id,
-
-                    payment_reference:
-                        paymentResult.rows[0]
-                            .payment_reference,
-
-                    payment_type,
-
-                    amount:
-                        paymentAmount,
-
-                    remaining_amount:
-                        remainingAmount,
-
-                    payment_status:
-                        paymentResult.rows[0]
-                            .payment_status,
-                },
-            },
-        });
-    } catch (error) {
-        await client.query("ROLLBACK");
-
-        console.error(
-            "Create booking error:",
-            error
-        );
-
-        res.status(500).json({
-            success: false,
-            message:
-                "Gagal membuat booking",
-        });
-    } finally {
-        client.release();
-    }
-});
+            res.status(500).json({
+                success: false,
+                message:
+                    "Gagal membuat booking",
+            });
+        } finally {
+            client.release();
+        }
+    });
 
 // ========================================
 // ADMIN - GET ALL BOOKINGS
