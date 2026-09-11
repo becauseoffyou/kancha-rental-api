@@ -221,7 +221,10 @@ router.get("/admin/waiting-verification", async (req, res) => {
             LEFT JOIN booking_items bi
                 ON bi.booking_id = b.id
 
-            WHERE p.payment_status = 'WAITING_VERIFICATION'
+            WHERE p.payment_status IN (
+    'WAITING_VERIFICATION',
+    'REJECTED'
+)
 
             ORDER BY p.created_at DESC
         `);
