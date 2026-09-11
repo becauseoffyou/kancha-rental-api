@@ -1323,8 +1323,11 @@ router.get("/:orderNumber", async (req, res) => {
                     ) AS end_date,
 
                     b.pickup_method,
-                    b.delivery_address,
-                    b.notes,
+                 b.delivery_address,
+b.delivery_latitude,
+b.delivery_longitude,
+b.delivery_distance_km,
+b.notes,
 
                     b.subtotal,
                     b.delivery_fee,
