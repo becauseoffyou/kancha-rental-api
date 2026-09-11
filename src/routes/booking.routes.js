@@ -3,6 +3,37 @@ const pool = require("../config/database");
 const authMiddleware = require("../middleware/auth.middleware");
 const router = express.Router();
 
+const KANCHA_LOCATION = {
+    lat: -6.180541010134697,
+    lng: 106.95234463499482,
+};
+
+const calculateDistanceKm = (lat1, lng1, lat2, lng2) => {
+    const R = 6371;
+
+    const dLat =
+        ((lat2 - lat1) * Math.PI) / 180;
+
+    const dLng =
+        ((lng2 - lng1) * Math.PI) / 180;
+
+    const a =
+        Math.sin(dLat / 2) *
+        Math.sin(dLat / 2) +
+        Math.cos((lat1 * Math.PI) / 180) *
+        Math.cos((lat2 * Math.PI) / 180) *
+        Math.sin(dLng / 2) *
+        Math.sin(dLng / 2);
+
+    const c =
+        2 *
+        Math.atan2(
+            Math.sqrt(a),
+            Math.sqrt(1 - a)
+        );
+
+    return R * c;
+};
 
 // =========================================
 // POST CREATE BOOKING
@@ -23,7 +54,6 @@ router.post(
                 delivery_address,
                 delivery_latitude,
                 delivery_longitude,
-                delivery_distance_km,
                 notes,
                 payment_type,
             } = req.body;
@@ -80,6 +110,20 @@ router.post(
                     success: false,
                     message:
                         "Alamat delivery wajib diisi",
+                });
+            }
+
+            if (
+                pickup_method === "DELIVERY" &&
+                (
+                    delivery_latitude == null ||
+                    delivery_longitude == null
+                )
+            ) {
+                return res.status(400).json({
+                    success: false,
+                    message:
+                        "Titik lokasi delivery wajib dipilih",
                 });
             }
 
@@ -251,7 +295,12 @@ router.post(
 
             const distanceKm =
                 pickup_method === "DELIVERY"
-                    ? Number(delivery_distance_km || 0)
+                    ? calculateDistanceKm(
+                        KANCHA_LOCATION.lat,
+                        KANCHA_LOCATION.lng,
+                        Number(delivery_latitude),
+                        Number(delivery_longitude)
+                    )
                     : 0;
 
             const deliveryFee =
@@ -288,33 +337,39 @@ router.post(
                 await client.query(
                     `
                 INSERT INTO bookings (
-                    order_number,
-                    user_id,
-                    start_date,
-                    end_date,
-                    pickup_method,
-                    delivery_address,
-                    notes,
-                    subtotal,
-                    delivery_fee,
-                    grand_total,
-                    payment_type,
-                    rental_status
-                )
-                VALUES (
-                    $1,
-                    $2,
-                    $3,
-                    $4,
-                    $5,
-                    $6,
-                    $7,
-                    $8,
-                    $9,
-                    $10,
-                    $11,
-                    'PENDING_PAYMENT'
-                )
+    order_number,
+    user_id,
+    start_date,
+    end_date,
+    pickup_method,
+    delivery_address,
+    delivery_latitude,
+    delivery_longitude,
+    delivery_distance_km,
+    notes,
+    subtotal,
+    delivery_fee,
+    grand_total,
+    payment_type,
+    rental_status
+)
+VALUES (
+    $1,
+    $2,
+    $3,
+    $4,
+    $5,
+    $6,
+    $7,
+    $8,
+    $9,
+    $10,
+    $11,
+    $12,
+    $13,
+    $14,
+    'PENDING_PAYMENT'
+)
                 RETURNING *
                 `,
                     [
@@ -323,10 +378,23 @@ router.post(
                         start_date,
                         end_date,
                         pickup_method,
-                        pickup_method ===
-                            "DELIVERY"
+
+                        pickup_method === "DELIVERY"
                             ? delivery_address
                             : null,
+
+                        pickup_method === "DELIVERY"
+                            ? Number(delivery_latitude)
+                            : null,
+
+                        pickup_method === "DELIVERY"
+                            ? Number(delivery_longitude)
+                            : null,
+
+                        pickup_method === "DELIVERY"
+                            ? Number(distanceKm.toFixed(2))
+                            : null,
+
                         notes || null,
                         subtotal,
                         deliveryFee,
