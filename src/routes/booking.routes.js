@@ -258,8 +258,8 @@ router.post(
                 pickup_method === "DELIVERY" &&
                     distanceKm > 0
                     ? Math.max(
-                        15000,
-                        Math.ceil(distanceKm) * 3000
+                        20000,
+                        Math.ceil(distanceKm) * 10000
                     )
                     : 0;
             const grandTotal =
