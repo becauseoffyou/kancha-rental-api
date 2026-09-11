@@ -21,10 +21,12 @@ router.post(
                 end_date,
                 pickup_method,
                 delivery_address,
+                delivery_latitude,
+                delivery_longitude,
+                delivery_distance_km,
                 notes,
                 payment_type,
             } = req.body;
-
             if (
                 !equipment_id ||
                 !start_date ||
@@ -247,11 +249,19 @@ router.post(
             const subtotal =
                 pricePerDay * duration;
 
-            const deliveryFee =
+            const distanceKm =
                 pickup_method === "DELIVERY"
-                    ? 50000
+                    ? Number(delivery_distance_km || 0)
                     : 0;
 
+            const deliveryFee =
+                pickup_method === "DELIVERY" &&
+                    distanceKm > 0
+                    ? Math.max(
+                        15000,
+                        Math.ceil(distanceKm) * 3000
+                    )
+                    : 0;
             const grandTotal =
                 subtotal + deliveryFee;
 
